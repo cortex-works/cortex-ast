@@ -5,3 +5,8 @@ benchmarks/
 .DS_Store
 target
 
+
+# AI chat/spec artifacts
+.specstory/
+chat.json
+.github/chat.json
