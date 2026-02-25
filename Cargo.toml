@@ -2,7 +2,7 @@
 name = "cortexast"
 version = "2.0.4"
 edition = "2021"
-description = "God-tier AST intelligence for LLM agents. Pure Rust MCP server with semantic code navigation, hybrid vector search, and Chronos AST time machine."
+description = "The AI-Native Code Intelligence Backend for LLM agents. Pure Rust MCP server with semantic code navigation and AST time machine."
 authors = ["Thanon Aphithanawat <thanon@aphithanawat.me>"]
 repository = "https://github.com/DevsHero/CortexAST"
 keywords = ["llm", "mcp", "context", "optimization", "rust", "vector-search"]
