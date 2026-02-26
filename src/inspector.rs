@@ -18,6 +18,9 @@ pub struct Symbol {
     /// 0-indexed end line (inclusive-ish; derived from tree-sitter end position)
     pub line_end: u32,
 
+    pub start_byte: usize,
+    pub end_byte: usize,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
 }
@@ -620,7 +623,7 @@ pub struct LanguageConfig {
 }
 
 impl LanguageConfig {
-    fn driver_for_path(&self, path: &Path) -> Option<&dyn LanguageDriver> {
+    pub fn driver_for_path(&self, path: &Path) -> Option<&dyn LanguageDriver> {
         let ext = path_ext_lower(path);
         if let Some(&idx) = self.by_ext.get(&ext) {
             let d = self.drivers.get(idx).map(|x| x.as_ref());
@@ -1546,6 +1549,8 @@ fn run_query(
             kind: kind.to_string(),
             line: start.row as u32,
             line_end: end.row as u32,
+            start_byte: def_node.start_byte(),
+            end_byte: def_node.end_byte(),
             signature,
         });
     }

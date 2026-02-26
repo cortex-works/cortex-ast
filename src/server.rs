@@ -534,6 +534,83 @@ impl ServerState {
                             },
                             "required": ["action"]
                         }
+                    },
+                    {
+                        "name": "cortex_act_edit_ast",
+                        "description": "🔧 AST SEMANTIC PATCHER — Apply surgical code edits to a source file using Tree-sitter byte-accurate targeting. Edits are applied via Two-Phase Commit (dry-run → validate → commit). If validation detects ERROR nodes, the Auto-Healer automatically sends the broken block to a local LLM (LM Studio/Ollama) for repair within a strict 10-second timeout before safe commit. NEVER uses line numbers — targets semantic nodes by name.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "file": { "type": "string", "description": "Absolute path to the file to edit." },
+                                "edits": {
+                                    "type": "array",
+                                    "description": "List of semantic edits to apply (bottom-up patching applied automatically).",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "target": { "type": "string", "description": "Semantic target: 'kind:name' or just 'name'. E.g. 'function:login' or 'login'." },
+                                            "action": { "type": "string", "enum": ["replace", "delete"], "description": "Edit action to apply." },
+                                            "code": { "type": "string", "description": "Replacement source code (used for 'replace' action)." }
+                                        },
+                                        "required": ["target", "action"]
+                                    }
+                                },
+                                "llm_url": { "type": "string", "description": "Optional override URL for the Auto-Healer LLM endpoint. Defaults to http://127.0.0.1:1234/v1/chat/completions." }
+                            },
+                            "required": ["file", "edits"]
+                        }
+                    },
+                    {
+                        "name": "cortex_act_edit_config",
+                        "description": "⚙️ CONFIG PATCHER — Surgically modify a single key in a JSON, YAML, or TOML config file using dot-path notation. Avoids rewriting the whole file. E.g. set 'dependencies.express' to '^4.18.2' in package.json.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "file": { "type": "string", "description": "Absolute path to the JSON/YAML/TOML file." },
+                                "action": { "type": "string", "enum": ["set", "delete"], "description": "Patch action." },
+                                "path": { "type": "string", "description": "Dot-path to the target key. E.g. 'dependencies.express' or 'server.port'." },
+                                "value": { "description": "New value to set (any JSON-compatible type). Required for 'set' action." }
+                            },
+                            "required": ["file", "action", "path"]
+                        }
+                    },
+                    {
+                        "name": "cortex_act_edit_docs",
+                        "description": "📄 DOCS PATCHER — Replace a specific section in a Markdown file, identified by its ## heading. Avoids rewriting the whole document and saves tokens.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "file": { "type": "string", "description": "Absolute path to the Markdown file." },
+                                "section": { "type": "string", "description": "The exact heading text (without #). E.g. 'Installation' for '## Installation'." },
+                                "content": { "type": "string", "description": "New section content (not including the heading line itself)." },
+                                "heading_level": { "type": "integer", "description": "Heading level (1-4). Defaults to 2 (##).", "default": 2 }
+                            },
+                            "required": ["file", "section", "content"]
+                        }
+                    },
+                    {
+                        "name": "cortex_act_run_async",
+                        "description": "⏳ ASYNC JOB RUNNER — Spawn a terminal command or shell script as a background job. Returns immediately with a job_id to avoid MCP timeout. Use cortex_check_job to poll for results.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "command": { "type": "string", "description": "Shell command to run in the background." },
+                                "cwd": { "type": "string", "description": "Optional working directory for the command." },
+                                "timeout_secs": { "type": "integer", "description": "Optional hard timeout in seconds. Defaults to 300.", "default": 300 }
+                            },
+                            "required": ["command"]
+                        }
+                    },
+                    {
+                        "name": "cortex_check_job",
+                        "description": "📊 JOB STATUS — Poll the status of a background job started by cortex_act_run_async. Returns status (running/done/failed), exit code, stdout, and stderr.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "job_id": { "type": "string", "description": "Job ID returned by cortex_act_run_async." }
+                            },
+                            "required": ["job_id"]
+                        }
                     }
                 ]
             }
@@ -636,6 +713,94 @@ impl ServerState {
                         })).unwrap_or_default())
                     }
                     _ => err("Invalid action. Must be 'status' or 'add'.".to_string()),
+                }
+            }
+            // ── CortexAct: Semantic Engine Tools ─────────────────────────
+            "cortex_act_edit_ast" => {
+                let file_str = match args.get("file").and_then(|v| v.as_str()) {
+                    Some(s) => s,
+                    None => return err("'file' parameter is required".to_string()),
+                };
+                let file_path = std::path::PathBuf::from(file_str);
+                let edits_val = match args.get("edits").and_then(|v| v.as_array()) {
+                    Some(arr) => arr.clone(),
+                    None => return err("'edits' array is required".to_string()),
+                };
+                let llm_url = args.get("llm_url").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+                let mut edits = Vec::new();
+                for item in &edits_val {
+                    let target = item.get("target").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let action = item.get("action").and_then(|v| v.as_str()).unwrap_or("replace").to_string();
+                    let code = item.get("code").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    if target.is_empty() { return err("Each edit must have a 'target'".to_string()); }
+                    edits.push(crate::act::editor::AstEdit { target, action, code });
+                }
+
+                match crate::act::editor::apply_ast_edits(&file_path, edits, llm_url.as_deref()) {
+                    Ok(result) => ok(serde_json::to_string(&json!({
+                        "status": "ok",
+                        "message": format!("Successfully applied {} edit(s) to {}", edits_val.len(), file_str),
+                        "preview": &result[..result.len().min(500)]
+                    })).unwrap_or_default()),
+                    Err(e) => err(format!("cortex_act_edit_ast failed: {}", e)),
+                }
+            }
+            "cortex_act_edit_config" => {
+                let file_str = match args.get("file").and_then(|v| v.as_str()) {
+                    Some(s) => s, None => return err("'file' required".to_string()),
+                };
+                let dot_path = match args.get("path").and_then(|v| v.as_str()) {
+                    Some(s) => s, None => return err("'path' required".to_string()),
+                };
+                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("set");
+                let value = args.get("value").cloned();
+
+                match crate::act::config_patcher::patch_config(file_str, action, dot_path, value.as_ref()) {
+                    Ok(msg) => ok(msg),
+                    Err(e) => err(format!("cortex_act_edit_config failed: {}", e)),
+                }
+            }
+            "cortex_act_edit_docs" => {
+                let file_str = match args.get("file").and_then(|v| v.as_str()) {
+                    Some(s) => s, None => return err("'file' required".to_string()),
+                };
+                let section = match args.get("section").and_then(|v| v.as_str()) {
+                    Some(s) => s, None => return err("'section' required".to_string()),
+                };
+                let content = match args.get("content").and_then(|v| v.as_str()) {
+                    Some(s) => s, None => return err("'content' required".to_string()),
+                };
+                let level = args.get("heading_level").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
+
+                match crate::act::docs_patcher::patch_docs(file_str, section, content, level) {
+                    Ok(msg) => ok(msg),
+                    Err(e) => err(format!("cortex_act_edit_docs failed: {}", e)),
+                }
+            }
+            "cortex_act_run_async" => {
+                let command = match args.get("command").and_then(|v| v.as_str()) {
+                    Some(s) => s.to_string(), None => return err("'command' required".to_string()),
+                };
+                let cwd = args.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let timeout_secs = args.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(300);
+
+                match crate::act::job_manager::spawn_job(command, cwd, timeout_secs) {
+                    Ok(job_id) => ok(serde_json::to_string(&json!({
+                        "status": "running",
+                        "job_id": job_id,
+                        "message": "Job started in background. Use cortex_check_job to poll for results."
+                    })).unwrap_or_default()),
+                    Err(e) => err(format!("cortex_act_run_async failed: {}", e)),
+                }
+            }
+            "cortex_check_job" => {
+                let job_id = match args.get("job_id").and_then(|v| v.as_str()) {
+                    Some(s) => s, None => return err("'job_id' required".to_string()),
+                };
+                match crate::act::job_manager::check_job(job_id) {
+                    Ok(status) => ok(serde_json::to_string(&status).unwrap_or_default()),
+                    Err(e) => err(format!("cortex_check_job failed: {}", e)),
                 }
             }
             "cortex_list_network" => {

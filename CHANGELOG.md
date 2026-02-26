@@ -1,314 +1,89 @@
 # Changelog
 
 All notable changes to **CortexAST** are documented here.  
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
+Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [2.1.0] — 2026-02-26
 
-### Added
-- **Network Map & Omni-AST Integration**  
-  Added the `cortex_list_network` MCP tool to return registered codebase entries from `~/.cortexast/codebases.json`.
-- **Cross-Codebase Resolution (`target_project`)**  
-  Expanded `cortex_code_explorer` and `cortex_symbol_analyzer` megatools to accept a `target_project` argument using strict ID/path whitelists from the network map dashboard.
+### Added — CortexAct: Source Code Editing & Auto-Healing Engine
+
+#### Module 1 — `cortex_act_edit_ast` (AST Semantic Patcher)
+- **Two-Phase Commit** with in-memory Virtual Dry-Run before any disk write.
+- **Bottom-up byte sorting**: multiple edits are sorted by `start_byte` descending before application, guaranteeing earlier replacements never corrupt the byte offsets of later target nodes.
+- **Write Permission Guard** (`check_write_permission`): verifies both `metadata().readonly()` and a live `OpenOptions::write` before touching the file; catches Unix ACL denials missed by permission bits. Error message names the expected user (`zelda`) and the `chmod` command to fix it.
+- **Tree-sitter Validator**: after patching the in-memory buffer, parse with the shared `RwLock<LanguageConfig>` / `WasmStore`. Any `ERROR` or `MISSING` node triggers the Auto-Healer instead of a disk write.
+- **`collect_ts_errors`**: walks the full AST cursor and produces a human-readable numbered list of error positions (row:col + snippet) to supply as context to the local LLM.
+
+#### Module 2 — Auto-Healer (`auto_healer.rs`)
+- Bridges to a local LLM endpoint (default: `http://127.0.0.1:1234/v1/chat/completions`; override via `llm_url`).
+- **10-second hard timeout** via `ureq::AgentBuilder.timeout()` — prevents MCP Timebomb.
+- **Context-aware prompt**: injects the numbered Tree-sitter error list so small models (e.g. `lfm2-2.6b`) know exactly which line/token to fix.
+- **`sanitize_llm_code`**: strips residual ` ``` ` markdown fences and language tags from LLM responses before passing repaired code to the second Tree-sitter validation pass.
+- Strict system prompt: `"Output ONLY raw code -- no markdown, no backticks, no explanations."`
+
+#### Module 3 — `cortex_act_edit_config`
+- Surgically modify a single key in `.json`, `.yaml`, or `.toml` using dot-path notation (e.g. `dependencies.express`).
+- Supports `set` and `delete` actions without rewriting the whole file.
+
+#### Module 4 — `cortex_act_edit_docs`
+- Replace any `## Section` in a Markdown file, identified by heading level + heading text.
+- Preserves all surrounding sections; configurable `heading_level` (default: `##`).
+
+#### Module 5 — `cortex_act_run_async` + `cortex_check_job`
+- Spawn shell commands as background threads. Returns `job_id` immediately (no MCP timeout).
+- Poll via `cortex_check_job { "job_id": "..." }` for status, exit code, stdout, and stderr.
+- Background threads auto-detect timeout via `Instant::elapsed()`.
+
+#### Inspector (`inspector.rs`)
+- `Symbol` struct gains `start_byte` and `end_byte` fields — exposed from `run_query` via `def_node` so callers gain byte-accurate ranges for patching.
+- `driver_for_path` made `pub` to allow `act::editor` to reuse the shared Wasm engine.
+
+#### Unit Tests Added (`src/act/`)
+- `editor::tests::bottom_up_sort_preserves_byte_offsets` — proves bottom-up sorting correctness.
+- `editor::tests::top_down_order_corrupts_offsets` — demonstrates the failure mode prevented.
+- `editor::tests::ts_error_collection_on_broken_rust` — validates AST error walker output.
+- `editor::tests::permission_guard_catches_readonly` — verifies `chmod 444` detection.
+- `editor::tests::permission_guard_passes_for_writable` — happy path.
+- `auto_healer::tests::sanitize_*` — 5 sanitizer tests (fence stripping, multi-block, passthrough, in-code ``` preservation, numbered error format).
+
+---
+
+## [2.0.4] — 2026-02-25
+
+### Added — Self-Evolving AST Manager (`cortex_manage_ast_languages`)
+- `status` action: reports active and downloadable languages.
+- `add` action: downloads `.wasm` + `[lang]_prune.scm` files from CDN.
+- **Hot-reload**: dynamically instantiates downloaded parsers into `RwLock<LanguageConfig>` without server restart.
+- **Retroactive rescan**: calls `CodebaseIndex::invalidate_extensions` to purge stale vector cache entries for newly added language extensions.
+- `WasmDriver` gains `make_parser()` method to correctly attach `WasmStore` per parser instance.
 
 ### Changed
-- Relocated core project references and URLs to `@cortex-works` to match the organizational migration of the CortexSync ecosystem.
-
-## [2.0.4] — 2025-07-22
-
-### Fixed
-- **`deep_slice + query=` "Goes wide" bug** (`src/server.rs` — `run_query_slice`)  
-  Vector search results were previously sourced from the entire `repo_root`, causing
-  semantic spill into unrelated modules (e.g., pulling `training.proto` and `main.rs`
-  alongside a specific `src/auth.rs` target). Results are now auto-scoped:  
-  - When `target` is a **file** → results restricted to the file's parent directory.  
-  - When `target` is a **directory** → results restricted to that directory subtree.  
-  - When `only_dir` is passed explicitly → results restricted to `only_dir`.
-
-- **`propagation_checklist` "Narrow" bug** (`src/inspector.rs`)  
-  Pure AST identifier matching missed Tauri command-layer callers because:  
-  1. `#[tauri::command]` attribute → frontend bridge creates JS-callable names not
-     captured by identifier scanning.  
-  2. `invoke("symbol_name", ...)` in TS/JS files matched symbol by string literal,
-     not identifier reference.  
-  Added a dedicated second-pass Tauri Bridge Detection that produces a new output
-  section **⚡ Tauri Commands (Rust → Frontend Bridge)** listing both Rust handlers
-  and TS `invoke()` call sites.
-
-### Added
-- **`single_file: bool` parameter for `deep_slice`** (`cortex_code_explorer` schema)  
-  When `true`, bypasses all vector search and returns only the exact `target` file/dir.
-  Takes priority over `query`. Eliminates "goes wide" for callers who know exactly
-  which file they want.
-
-- **`only_dir: string` parameter for `deep_slice`** (`cortex_code_explorer` schema)  
-  Restricts semantic vector search candidates to a subdirectory. Pass a path relative
-  to `repoPath`. Complements `exclude` — while `exclude` removes unwanted dirs,
-  `only_dir` *allows only* the specified dir. Essential for polyrepo / microservice
-  codebases where `target` is a shared file but results must stay within one service.
-
-- **`only_dir: string` parameter for `propagation_checklist`** (`cortex_symbol_analyzer` schema)  
-  Overrides `target_dir` when present. Scopes the checklist scan to a single
-  microservice root (e.g., `services/auth`) without changing the `target_dir`
-  semantic. Avoids the 50-file blast-radius cap being hit prematurely on ubiquitous
-  symbols in large monorepos.
-
-## [2.1.0] — 2026-02-21
-
-### Added
-- **`enable_sync` guard for Tier 2 in `cortex_get_rules`** (`src/rules.rs`)  
-  The team-cluster tier (`~/.cortexast/cluster/{id}_rules.yml`) is now skipped when
-  `rules_engine.enable_sync` is `false` in the project's `.cortexast.json`.  
-  Previously the flag was parsed but its value was discarded — the cluster file was
-  always attempted. Now: `if enable_sync { … }` gates the entire Tier 2 block.  
-  Emits `[cortex_get_rules] INFO: Tier 2 (team) skipped — enable_sync=false` to stderr.
-
-- **`no_rules_found` sentinel** (`src/rules.rs`)  
-  When none of the three tier files exist on disk, `get_merged_rules` now returns
-  `{"status":"no_rules_found"}` instead of an empty JSON object `{}`.  
-  Agents can detect the sentinel and treat it as a no-op rather than silently
-  receiving empty rules.
-
-- **`tiers_loaded` counter** (`src/rules.rs`)  
-  Internal `u8` counter incremented for each tier that successfully loads.
-  Drives the `no_rules_found` sentinel and makes future per-tier telemetry easy to add.
-
-- **`read_cortexast_json()`** replaces `read_team_cluster_id()` (`src/rules.rs`)  
-  Now returns `(bool, Option<String>)` — the `enable_sync` flag alongside the cluster ID.
-  Default when `.cortexast.json` is absent or the key is missing: `(true, None)`.
-
-- **Expanded test suite** (`src/rules.rs`) — 6 tests total (was 3):  
-  `get_merged_rules_full_filesystem_merge`, `enable_sync_false_skips_tier2`,
-  `no_rules_found_sentinel_when_all_tiers_missing`.
-
-### Changed
-- **`cortex_get_rules` tool description** (`src/server.rs`)  
-  Updated from the internal implementation summary to the agent-facing spec:  
-  _"CRITICAL: Always call this tool BEFORE taking any action in a new session.
-  Returns dynamically merged AI rules from three tiers … Returns
-  `{"status":"no_rules_found"}` if no rule files exist."_
-
-## [2.0.3] — 2026-02-21
-
-### Fixed
-- **Misleading `namespace: 'default'` label in `delete_checkpoint` confirmation when deletions came from the legacy flat store** (`src/chronos.rs`)  
-  When `delete_checkpoint` found no matches in the named-namespace directory and fell back to the legacy flat `checkpoints/` directory, the success message still read  
-  _"Deleted N/M checkpoint(s) from namespace 'default' (path)"_ regardless of where the files actually lived.  
-  Added a `from_legacy` boolean flag; when `true`, the label switches to  
-  _"legacy flat store (path)"_ so agents can tell whether deletion came from a namespace directory or the pre-namespace layout.
-
-## [2.0.2] — 2026-02-21
-
-### Fixed
-- **Issue 1 — Stale `get_context_slice` hint in symbol truncation message** (`src/inspector.rs`)  
-  When a symbol exceeded `MAX_SYMBOL_LINES` (500), the truncation footer told agents to  
-  _"use `get_context_slice` with a `byte_range`"_ — an action that no longer exists in the  
-  2.0.0 megatool API. Agents following it would receive a tool error and enter a retry loop.  
-  Replaced with: _"(1) pass `skeleton_only: true` to see signatures only, (2) increase  
-  `max_chars` if your client supports larger output, or (3) refactor this large symbol."_
-
-- **Issue 2 — Opaque path error for `deep_slice` with extensionless target** (`src/server.rs`)  
-  Passing a bare name (e.g. `"orchestrator"` instead of `"orchestrator.rs"`) returned only  
-  _"Target does not exist"_ with no recovery hint.  
-  Added a proactive path guard in the `deep_slice` handler: before dispatching, the resolved  
-  path is checked, and if absent, the parent directory is scanned for entries whose name  
-  contains the requested stem (case-insensitive). Up to 5 suggestions are formatted as  
-  `Did you mean one of: 'orchestrator.rs', ...`. Falls back to a `map_overview` tip when  
-  no candidates are found.
-
-- **Issue 3 — Verbose double-print in `compare_checkpoint` when snapshots are identical** (`src/chronos.rs`)  
-  When `tag_b="__live__"` was used to verify an edit that hadn’t changed the symbol, the  
-  full source body was printed twice (once per snapshot), wasting roughly half the token  
-  budget on duplicate content.  
-  Added an early short-circuit: if `rec_a.code.trim() == rec_b.code.trim()`, a compact  
-  summary is returned instead:  
-  `✅ NO STRUCTURAL DIFF — symbol_name is identical in both snapshots.`  
-  including both file paths for traceability, then returns immediately without printing  
-  the full source.
- — 2026-02-21
-
-### Added
-- **`exclude` parameter for `cortex_code_explorer`** (`map_overview` + `deep_slice`)  
-  Agents can now pass `exclude: ["node_modules", "vendor", "__pycache__", "build"]` to prune directories at scan time.  
-  - Applied as a `filter_entry` predicate on **both** the filtered walker (file discovery) and the unfiltered walker (scan-count diagnostics), so dropped counts remain accurate.  
-  - Matched against each directory's **base name** — pruning applies at every depth without requiring full path patterns.  
-  - `deep_slice` merges per-call `exclude` into `cfg.scan.exclude_dir_names` so the same exclusion list flows through `build_scan_options → scan_workspace`.  
-  - Fixes the QA finding where repos with `node_modules` or large asset folders triggered "Massive Directory" mode despite the source tree being small.
-- **`instance_index` parameter for `cortex_symbol_analyzer` `read_source`**  
-  Resolves the QA finding where files with multiple same-named symbols (overloaded methods, duplicate arrow functions) silently returned only the first instance with no indication that others existed.  
-  - When `N > 1` matches are found, the response prepends a disambiguation header:  
-    `// ⚠️ Disambiguation: Found N instances of 'name'. Showing instance 1 of N (1-based). Use instance_index param (0-based, 0..N-1) to select a specific one.`  
-  - Pass `instance_index: 1` for the second, `instance_index: 2` for the third, etc. Clamps silently to the last valid index.  
-  - Batch mode (`symbol_names`) defaults to instance 0 for each symbol.
-
-### Changed
-- **`cortex_code_explorer` MCP schema** updated: `exclude` array field documented under both `map_overview` and `deep_slice` action descriptions.
-- **`cortex_symbol_analyzer` MCP schema** updated: `instance_index` integer field added to `read_source` action description.
-- **`.github/copilot-instructions.md`** quick-reference table expanded with a "Key Optional Params" column surfacing `exclude` and `instance_index` for faster agent discovery.
- — Megatool API
-
-### Breaking Changes (with shims)
-- **10 standalone MCP tools consolidated into 4 Megatools** using `action` enum routing.
-  Old tool names are still accepted as compatibility shims via the router but are deprecated.
-  All new integrations should use the new API.
-
-  | Old Tool Name | New API |
-  |---|---|
-  | `map_repo` | `cortex_code_explorer` + `action: map_overview` |
-  | `get_context_slice` | `cortex_code_explorer` + `action: deep_slice` |
-  | `read_symbol` | `cortex_symbol_analyzer` + `action: read_source` |
-  | `find_usages` | `cortex_symbol_analyzer` + `action: find_usages` |
-  | `call_hierarchy` | `cortex_symbol_analyzer` + `action: blast_radius` |
-  | `propagation_checklist` | `cortex_symbol_analyzer` + `action: propagation_checklist` |
-  | `save_checkpoint` | `cortex_chronos` + `action: save_checkpoint` |
-  | `list_checkpoints` | `cortex_chronos` + `action: list_checkpoints` |
-  | `compare_checkpoint` | `cortex_chronos` + `action: compare_checkpoint` |
-  | `run_diagnostics` | `run_diagnostics` (unchanged) |
-
-### Added
-- **Production-quality tool descriptions** — all 4 megatools now carry Anthropic-best-practice-compliant descriptions with:
-  - DECISION GUIDE blocks mapping user intent → action choice
-  - Per-action trigger phrases (when to use, when NOT to use)
-  - Required vs optional param callouts inline in enum descriptions
-  - Negative anchors ("NEVER use grep/rg when this tool is available")
-  - Aim for 5–8 sentences per tool, following Anthropic guideline of ≥3–4 sentences for complex tools
-- **`USE_CASES.md`** — Agentic Workflow Playbook with 3 killer use cases, Mermaid flowcharts, and agent execution logs
-- **README.md Agentic Workflow Playbook section** — links to USE_CASES.md
-- **`.cortexast/` added to `.gitignore`** — prevents Chronos snapshot files from being committed
-
-### Added (v2.0.0 hardening)
-- **Protocol-first workspace root resolution**: MCP `initialize` (`rootUri` / `rootPath` / `workspaceFolders`) is captured and becomes the canonical `repo_root` for the session.
-- **Omni-root bootstraps**: `--root`, `CORTEXAST_ROOT`, and IDE env vars (`VSCODE_WORKSPACE_FOLDER`, `VSCODE_CWD`, `IDEA_INITIAL_DIRECTORY`, `PWD`/`INIT_CWD` guarded) are supported for pre-initialize startup.
-- **CRITICAL dead-root safeguard**: refuses to operate when the resolved root is OS root or `$HOME` (prevents catastrophic whole-filesystem scans).
-- **Windows file URI decoding**: handles `file:///C:/repo` by stripping the extra leading slash so paths are valid on Windows.
-- `cortex_chronos(action=list_checkpoints)` surfaces legacy flat checkpoints stored directly under `checkpoints/` root (pre-namespace layout) under a `(legacy)` namespace section.
-- `cortex_chronos(action=delete_checkpoint)`:
-  - Legacy fallback deletion: if no matches exist in a namespace dir, searches the legacy flat `checkpoints/` dir.
-  - Self-teaching errors for non-existent namespace purge requests.
-- `cortex_chronos(compare_checkpoint)` supports `tag_b="__live__"` to compare a saved snapshot against the filesystem (requires `path`).
-- `cortex_symbol_analyzer(action=find_implementations)` locates Rust/TypeScript implementors of a trait/interface.
-- `cortex_code_explorer(action=deep_slice)` supports `skeleton_only: true`.
-- **Chronos namespaces:** all Chronos actions accept an optional `namespace` parameter (default: `"default"`). Checkpoints are stored under `checkpoints/<namespace>/`.
-
-### Changed
-- **Recommended agent rules updated** across all 5 client templates (VS Code, Cursor, Windsurf, Cline, Claude Desktop) to reference new megatool + action syntax
-- **MCP Tool Reference in README.md** rewritten for megatool API with per-action parameter documentation
-
-### Changed (v2.0.0 hardening)
-- Root resolution order is now protocol-first and cross-IDE safe: `repoPath → MCP initialize → startup bootstrap/env vars → find-up heuristic from tool args → cwd (CRITICAL if dead)`.
-- Output safety defaults to `max_chars=8_000` and always truncates inline to prevent IDE spill-to-disk.
-- Removed legacy spill-to-`/tmp` behaviors to keep Windows/macOS/Linux parity.
-
-### Fixed (v2.0.0 hardening)
-- **BUG-C1**: `$HOME`/dead-cwd root resolution now emits a CRITICAL error with an actionable message instead of silently scanning.
-- **BUG-C4**: Chronos lists and manages legacy flat checkpoints for backward compatibility.
+- `LanguageConfig` refactored to `RwLock<LanguageConfig>` for concurrent read / exclusive write.
+- Startup now scans `~/.cortex-works/grammars/` to load previously downloaded Wasm parsers.
 
 ---
 
-## [1.5.0] — 2026-02-20
+## [2.0.0] — 2026-02-23
 
-### Added
-- **`get_context_slice` inline/spill logic** — output ≤ 8 KB is returned inline (zero agent round-trip); larger output is written to `/tmp/cortexast_slice_{hash}.xml` with a `read_file` hint so agents never get a context window flood
-- **`propagation_checklist` blast-radius guardrails** — hard cap of 50 files and 8 000 chars per call; overflow generates a `BLAST RADIUS WARNING` line with remaining count; deterministic sort by domain/path
-- **`propagation_checklist` `ignore_gitignore` + line numbers** — `ignore_gitignore: true` bypasses `.gitignore` so generated/stubbed files (e.g. gRPC stubs) are included; AST-extracted line numbers shown per file (max 5, `…` suffix)
-- **`propagation_checklist` symbol mode** — pass `symbol_name` for cross-boundary AST tracing grouped by language/domain (Proto → Rust → TS → Python → Other); legacy `changed_path` mode preserved
-- **`map_repo` guardrails** — did-you-mean path recovery (`!target_dir.exists()` → lists repo-root top-level entries ≤ 30), regex-ish input warning banner, schema tip descriptions
-- **`map_repo` `search_filter` OR support** — tokenises on `|`, per-token substring matching; symbol-aware fallback for repos ≤ 300 files
-- **`read_symbol` DX** — "Symbol not found" error caps available symbol list at 30 (overflow line + count), appends recovery hint pointing to `find_usages` / `map_repo`
-
-### Changed
-- **Tool descriptions hardened** (addresses QA "Why underused" root causes):
-  - `call_hierarchy` — trigger text changed to "USE BEFORE ANY FUNCTION RENAME, MOVE, OR DELETE"
-  - `save_checkpoint` — "USE THIS before any non-trivial edit or refactor"
-  - `propagation_checklist` — "Also USE THIS before changing any shared type, struct, or interface — strictly better than manually searching usages file-by-file"
-  - `get_context_slice` — documents inline vs spill behaviour in schema description
-
-### Fixed (chore)
-- Renamed all remaining legacy `neurosiphon` identifiers in source code to `cortexast`:
-  - `#[command(name)]` in `main.rs`
-  - XML root element tag in `xml_builder.rs`
-  - Debug log prefixes in `vector_store.rs` and `scanner.rs`
-- Updated `docs/BUILDING.md` to reflect `cortexast` binary name and current repository URL
+### Added — Wasm Plugin Architecture
+- Modular backend: languages loaded as WebAssembly grammars for small binary size.
+- `grammar_manager.rs`: CDN fetcher for `.wasm` and `.scm` grammar files.
+- Universal regex fallback for unsupported extensions.
+- Static languages (Rust, TypeScript, Python) always available.
+- `WasmDriver` trait implementation for dynamic language loading.
 
 ---
 
-## [1.4.1] — 2026-02-17
+## [1.x] — Earlier
 
-### Added
-- `map_repo` dropped-file diagnostics — shows which files matched the filter, which were dropped, and why
-- Strict summary-first threshold (`STRICT_SUMMARY_THRESHOLD = 50`) — repos above this size always emit a summary header before per-file detail
-- Hard 8 000-char output cap on `map_repo` with UTF-8-safe truncation marker
-
-### Changed
-- `map_repo` progressive disclosure output format — one-liner skeleton for small files, full symbol list for large ones
-- Improved 0-file diagnostics: lists supported extensions and worked example
-
----
-
-## [1.4.0] — 2026-02-15
-
-### Added
-- **Rebrand**: NeuroSiphon → **CortexAST** v1.4.0; all tool names shortened (`cortex_map` → `map_repo`, etc.)
-- **Chronos AST Time Machine**: `save_checkpoint`, `list_checkpoints`, `compare_checkpoint` — disk-backed semantic symbol snapshots; structural diff ignores whitespace/line-number noise
-- **`propagation_checklist`** (initial): given a changed file path, generates a cross-language propagation checklist
-- **`find_usages`** categories: Calls / Type References / Field Initializations
-- **`read_symbol`** batch mode via `symbol_names: [...]`
-- `.proto` file support in `map_repo`, `read_symbol`, `find_usages` via ProtoDriver
-- `const`, `static`, `type` alias support for Rust, TypeScript, Go extractions
-
-### Changed
-- Aggressive prompt-injection descriptions to steer agent tool preference
-- `map_repo` `search_filter` parameter added
-
----
-
-## [1.3.1] — 2026-02-10
-
-### Fixed
-- Show all Rust symbols (not just first pass)
-- Better Python attribute call detection in `call_hierarchy`
-- Reduce outgoing-call noise for push_str / trivial intrinsics
-
-### Changed
-- Default embedding model updated for better semantic recall
-- 2-stage hybrid router with deterministic exact-match ranking ("Symbol Sniper")
-
----
-
-## [1.3.0] — 2026-02-05
-
-### Added
-- `repo_map`, `call_hierarchy`, `run_diagnostics` MCP tools
-- Auto-detect project type for `run_diagnostics` (`cargo check` / `tsc --noEmit`)
-- Compiler errors mapped back to 1-line AST source context
-
----
-
-## [1.2.0] — 2026-01-28
-
-### Added
-- **AST X-Ray** (`read_symbol`) and **`find_usages`** tracer tools
-- v2 vector index with `xxh3` content hashing for JIT incremental updates
-
----
-
-## [1.1.0] — 2026-01-20
-
-### Added
-- Monorepo / nested workspace support — auto-discovers `Cargo.toml`, `package.json`, `pyproject.toml` manifests
-- Enterprise workspace engine with cross-budget routing
-
----
-
-## [1.0.0] — 2026-01-10
-
-### Added
-- Initial public release
-- `get_context_slice` with `model2vec-rs` hybrid vector search (pure Rust, < 100 MB RAM)
-- Nuclear skeletonization — function bodies pruned to signatures, imports collapsed
-- Multi-language grammar support: Rust, TypeScript/JavaScript, Python, Go
-- Cross-platform pre-built binaries (macOS, Linux, Windows)
-- MCP stdio server (`cortexast mcp`)
-- Chaos resilience: binary skip, UTF-8 lossy, index auto-repair, 1 MB file cap
+Initial implementation of:
+- `cortex_code_explorer` (map_overview + deep_slice)
+- `cortex_symbol_analyzer` (read_source, find_usages, blast_radius, propagation_checklist)
+- `cortex_chronos` (AST snapshot save/compare/rollback)
+- `cortex_memory_retriever` + `cortex_remember` (global memory journal)
+- `vector_store.rs` (model2vec embeddings, cosine search, cache invalidation)
+- `cortex_diagnostics` (compiler error mapping)
+- `cortex_list_network` (cross-project network map)

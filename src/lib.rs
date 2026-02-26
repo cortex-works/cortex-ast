@@ -8,6 +8,7 @@ macro_rules! debug_log {
 	}};
 }
 
+pub mod act;
 pub mod chronos;
 pub mod config;
 pub mod grammar_manager;
