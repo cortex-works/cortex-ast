@@ -231,7 +231,7 @@ mod tests {
 
         let mut parser = Parser::new();
         parser
-            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .set_language(&tree_sitter_rust::language().into())
             .expect("load rust grammar");
 
         // Missing closing brace — classic syntax error

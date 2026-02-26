@@ -181,3 +181,37 @@ fn json_to_toml(v: &serde_json::Value) -> toml::Value {
         serde_json::Value::Null => toml::Value::String("null".to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::fs;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_patch_json_nested() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        fs::write(path, r#"{"db": {"host": "localhost", "port": 5432}}"#).unwrap();
+
+        patch_json(path, "set", "db.port", Some(&json!(5433))).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(val["db"]["port"], 5433);
+
+        patch_json(path, "delete", "db.host", None).unwrap();
+        let val2: serde_json::Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert!(val2["db"]["host"].is_null());
+    }
+
+    #[test]
+    fn test_patch_json_array() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+        fs::write(path, r#"{"features": ["a", "b"]}"#).unwrap();
+
+        patch_json(path, "set", "features", Some(&json!(["a", "b", "c"]))).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(val["features"][2], "c");
+    }
+}

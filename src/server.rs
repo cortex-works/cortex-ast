@@ -561,31 +561,19 @@ impl ServerState {
                         }
                     },
                     {
-                        "name": "cortex_act_edit_config",
-                        "description": "⚙️ CONFIG PATCHER — Surgically modify a single key in a JSON, YAML, or TOML config file using dot-path notation. Avoids rewriting the whole file. E.g. set 'dependencies.express' to '^4.18.2' in package.json.",
+                        "name": "cortex_patch_file",
+                        "description": "🔧 UNIFIED PATCHER — Surgically modify Config (JSON/YAML/TOML dot-path), Docs (Markdown headings), or Env (.env keys). Avoids full-file rewrites.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "file": { "type": "string", "description": "Absolute path to the JSON/YAML/TOML file." },
+                                "file": { "type": "string", "description": "Absolute path to the target file." },
+                                "type": { "type": "string", "enum": ["config", "docs", "env"], "description": "Type of patching to apply." },
                                 "action": { "type": "string", "enum": ["set", "delete"], "description": "Patch action." },
-                                "path": { "type": "string", "description": "Dot-path to the target key. E.g. 'dependencies.express' or 'server.port'." },
-                                "value": { "description": "New value to set (any JSON-compatible type). Required for 'set' action." }
+                                "target": { "type": "string", "description": "Dot-path (config), Section heading (docs), or Key name (env)." },
+                                "value": { "description": "New value/content to set (JSON arrays/objects, or markdown string). Required for 'set' action." },
+                                "heading_level": { "type": "integer", "description": "Heading level (1-4) for 'docs' only. Defaults to 2 (##).", "default": 2 }
                             },
-                            "required": ["file", "action", "path"]
-                        }
-                    },
-                    {
-                        "name": "cortex_act_edit_docs",
-                        "description": "📄 DOCS PATCHER — Replace a specific section in a Markdown file, identified by its ## heading. Avoids rewriting the whole document and saves tokens.",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "file": { "type": "string", "description": "Absolute path to the Markdown file." },
-                                "section": { "type": "string", "description": "The exact heading text (without #). E.g. 'Installation' for '## Installation'." },
-                                "content": { "type": "string", "description": "New section content (not including the heading line itself)." },
-                                "heading_level": { "type": "integer", "description": "Heading level (1-4). Defaults to 2 (##).", "default": 2 }
-                            },
-                            "required": ["file", "section", "content"]
+                            "required": ["file", "type", "action", "target"]
                         }
                     },
                     {
@@ -603,11 +591,22 @@ impl ServerState {
                     },
                     {
                         "name": "cortex_check_job",
-                        "description": "📊 JOB STATUS — Poll the status of a background job started by cortex_act_run_async. Returns status (running/done/failed), exit code, stdout, and stderr.",
+                        "description": "📊 JOB STATUS — Poll a background job started by cortex_act_run_async. Returns status (running/done/failed), PID, exit code, duration_secs, and the last 20 lines of the log file (log_tail).",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "job_id": { "type": "string", "description": "Job ID returned by cortex_act_run_async." }
+                            },
+                            "required": ["job_id"]
+                        }
+                    },
+                    {
+                        "name": "cortex_kill_job",
+                        "description": "🛑 KILL JOB — Terminate a running background job. Sends SIGTERM to the process and marks it as failed. Safe to call on already-finished jobs (no-op).",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "job_id": { "type": "string", "description": "Job ID to terminate." }
                             },
                             "required": ["job_id"]
                         }
@@ -746,36 +745,48 @@ impl ServerState {
                     Err(e) => err(format!("cortex_act_edit_ast failed: {}", e)),
                 }
             }
-            "cortex_act_edit_config" => {
+            "cortex_patch_file" => {
                 let file_str = match args.get("file").and_then(|v| v.as_str()) {
                     Some(s) => s, None => return err("'file' required".to_string()),
                 };
-                let dot_path = match args.get("path").and_then(|v| v.as_str()) {
-                    Some(s) => s, None => return err("'path' required".to_string()),
+                let patch_type = match args.get("type").and_then(|v| v.as_str()) {
+                    Some(s) => s, None => return err("'type' required".to_string()),
                 };
                 let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("set");
-                let value = args.get("value").cloned();
-
-                match crate::act::config_patcher::patch_config(file_str, action, dot_path, value.as_ref()) {
-                    Ok(msg) => ok(msg),
-                    Err(e) => err(format!("cortex_act_edit_config failed: {}", e)),
-                }
-            }
-            "cortex_act_edit_docs" => {
-                let file_str = match args.get("file").and_then(|v| v.as_str()) {
-                    Some(s) => s, None => return err("'file' required".to_string()),
+                let target = match args.get("target").and_then(|v| v.as_str()) {
+                    Some(s) => s, None => return err("'target' required".to_string()),
                 };
-                let section = match args.get("section").and_then(|v| v.as_str()) {
-                    Some(s) => s, None => return err("'section' required".to_string()),
-                };
-                let content = match args.get("content").and_then(|v| v.as_str()) {
-                    Some(s) => s, None => return err("'content' required".to_string()),
-                };
-                let level = args.get("heading_level").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
-
-                match crate::act::docs_patcher::patch_docs(file_str, section, content, level) {
-                    Ok(msg) => ok(msg),
-                    Err(e) => err(format!("cortex_act_edit_docs failed: {}", e)),
+                
+                match patch_type {
+                    "env" => {
+                        let value = args.get("value").and_then(|v| v.as_str());
+                        match crate::act::env_patcher::patch_env(file_str, action, target, value) {
+                            Ok(msg) => ok(msg),
+                            Err(e) => err(format!("cortex_patch_env failed: {}", e)),
+                        }
+                    }
+                    "config" => {
+                        let value = args.get("value").cloned();
+                        match crate::act::config_patcher::patch_config(file_str, action, target, value.as_ref()) {
+                            Ok(msg) => ok(msg),
+                            Err(e) => err(format!("cortex_patch_config failed: {}", e)),
+                        }
+                    }
+                    "docs" => {
+                        let content = if action == "delete" {
+                            ""
+                        } else {
+                            match args.get("value").and_then(|v| v.as_str()) {
+                                Some(s) => s, None => return err("'value' string required for docs 'set' action".to_string()),
+                            }
+                        };
+                        let level = args.get("heading_level").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
+                        match crate::act::docs_patcher::patch_docs(file_str, target, content, level) {
+                            Ok(msg) => ok(msg),
+                            Err(e) => err(format!("cortex_patch_docs failed: {}", e)),
+                        }
+                    }
+                    other => err(format!("Invalid patch type: {}", other)),
                 }
             }
             "cortex_act_run_async" => {
@@ -786,12 +797,8 @@ impl ServerState {
                 let timeout_secs = args.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(300);
 
                 match crate::act::job_manager::spawn_job(command, cwd, timeout_secs) {
-                    Ok(job_id) => ok(serde_json::to_string(&json!({
-                        "status": "running",
-                        "job_id": job_id,
-                        "message": "Job started in background. Use cortex_check_job to poll for results."
-                    })).unwrap_or_default()),
-                    Err(e) => err(format!("cortex_act_run_async failed: {}", e)),
+                    Ok(result) => ok(serde_json::to_string(&result).unwrap_or_default()),
+                    Err(e)     => err(format!("cortex_act_run_async failed: {}", e)),
                 }
             }
             "cortex_check_job" => {
@@ -799,8 +806,17 @@ impl ServerState {
                     Some(s) => s, None => return err("'job_id' required".to_string()),
                 };
                 match crate::act::job_manager::check_job(job_id) {
-                    Ok(status) => ok(serde_json::to_string(&status).unwrap_or_default()),
-                    Err(e) => err(format!("cortex_check_job failed: {}", e)),
+                    Ok(result) => ok(serde_json::to_string(&result).unwrap_or_default()),
+                    Err(e)     => err(format!("cortex_check_job failed: {}", e)),
+                }
+            }
+            "cortex_kill_job" => {
+                let job_id = match args.get("job_id").and_then(|v| v.as_str()) {
+                    Some(s) => s, None => return err("'job_id' required".to_string()),
+                };
+                match crate::act::job_manager::kill_job(job_id) {
+                    Ok(msg) => ok(msg),
+                    Err(e)  => err(format!("cortex_kill_job failed: {}", e)),
                 }
             }
             "cortex_list_network" => {
