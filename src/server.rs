@@ -299,103 +299,89 @@ impl ServerState {
                 "tools": [
                     {
                         "name": "cortex_code_explorer",
-                        "description": "🔍 CODE EXPLORER MEGATOOL — 🔥 ALWAYS USE THIS INSTEAD OF ls, tree, find, or cat for any codebase exploration task. Provides two complementary lenses on a codebase: a fast bird's-eye symbol map or a deep token-budgeted XML slice. DECISION GUIDE → `map_overview`: use when you need to understand repo structure, discover file/symbol names, or orient yourself before starting a task — costs almost zero tokens, run this first on any new codebase. → `deep_slice`: use when you need actual function bodies or multi-file context for a specific edit — auto-skeletonizes files to fit a token budget and optionally vector-ranks files by semantic relevance to a query. Do NOT use `deep_slice` just to list files or symbols; use `map_overview` for that.",
+                        "description": "Codebase explorer. Use INSTEAD of ls/tree/find/cat. Two modes: `map_overview` (fast symbol map, near-zero tokens — run first on any repo) and `deep_slice` (token-budgeted XML with function bodies, vector-ranked by query). Use map_overview to orient; deep_slice to get code for editing.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "action": {
                                     "type": "string",
                                     "enum": ["map_overview", "deep_slice"],
-                                    "description": "Required — chooses the exploration mode.\n• `map_overview` — Returns a condensed bird's-eye map of all files and public symbols in a directory. Requires `target_dir` (use '.' for whole repo). Optional: `search_filter`, `max_chars`, `ignore_gitignore`, `exclude` (array of dir names to skip). Returns minimal tokens even for large repos — run this first on any unfamiliar codebase.\n• `deep_slice` — Returns a token-budget-aware XML slice of a file or directory with function bodies pruned to skeletons. Requires `target`. Optional: `budget_tokens` (default 32000), `skeleton_only`, `query`, `query_limit`, `exclude` (array of dir names to skip), `single_file` (bool — skip vector search entirely and return only target), `only_dir` (restrict semantic query to this subdirectory). When `query` is set, only the most relevant files are included. Set `single_file=true` when target is a specific file you want exclusively, without cross-file spill."
+                                    "description": "map_overview: bird's-eye symbol map of a dir (requires target_dir='.'). deep_slice: token-budgeted XML with bodies (requires target file/dir; use single_file=true for a specific file, query for semantic ranking)."
                                 },
-                                "repoPath": { "type": "string", "description": "Optional absolute path to the repo root (defaults to current working directory)." },
-                                "target_project": { "type": "string", "description": "OMNI-AST: Optional ID or absolute path of another codebase in the network map. Overrides repoPath for cross-project exploration." },
-
-                                "target_dir": { "type": "string", "description": "(map_overview) Directory to map (use '.')" },
-                                "search_filter": { "type": "string", "description": "(map_overview) Optional: case-insensitive substring filter (NOT regex). Supports OR via `foo|bar|baz`." },
-                                "max_chars": { "type": "integer", "description": "Optional: Maximum output characters. Default 8000 — calibrated to stay below VS Code Copilot's ~8 KB inline-display threshold. Raise to up to ~30000 if your client handles large inline output; note VS Code Copilot will spill responses >~8 KB to workspace storage." },
-                                "ignore_gitignore": { "type": "boolean", "description": "(map_overview) Optional: include git-ignored files." },
-                                "exclude": {
-                                    "type": "array",
-                                    "items": { "type": "string" },
-                                    "description": "(map_overview + deep_slice) Optional: array of directory names to exclude from scanning (e.g. ['node_modules', 'vendor', '__pycache__', 'build']). Matched against the directory's base name, so it applies at every depth. Use this when the repo contains heavy generated/dependency folders that inflate the scan count and trigger summary-only mode."
-                                },
-
-                                "target": { "type": "string", "description": "(deep_slice) Relative path within repo to slice (file or dir). Required for deep_slice." },
-                                "budget_tokens": { "type": "integer", "exclusiveMinimum": 0, "description": "(deep_slice) Token budget (default 32000)." },
-                                "skeleton_only": { "type": "boolean", "description": "(deep_slice) If true, enforces structural pruning (skeleton output only) regardless of config." },
-                                "query": { "type": "string", "description": "(deep_slice) Optional semantic query for vector-ranked slicing." },
-                                "query_limit": { "type": "integer", "description": "(deep_slice) Optional max files in query mode." },
-                                "single_file": { "type": "boolean", "description": "(deep_slice) When true, skips all vector search and returns only the exact target file/dir. Use when target is a specific file you want exclusively — prevents semantic cross-file spill. Takes priority over `query`." },
-                                "only_dir": { "type": "string", "description": "(deep_slice query mode) Restrict semantic vector search to this subdirectory only. Pass a path relative to repoPath. Prevents cross-module spill in polyrepo / microservice codebases — only files inside this directory are candidates for query-based retrieval." }
+                                "repoPath": { "type": "string", "description": "Abs path to repo root. Default: cwd." },
+                                "target_project": { "type": "string", "description": "Cross-project: ID or abs path from network map. Overrides repoPath." },
+                                "target_dir": { "type": "string", "description": "(map_overview) Dir to map. Use '.' for repo root." },
+                                "search_filter": { "type": "string", "description": "(map_overview) Case-insensitive substring filter. OR via 'foo|bar'." },
+                                "max_chars": { "type": "integer", "description": "Max output chars. Default 8000." },
+                                "ignore_gitignore": { "type": "boolean", "description": "(map_overview) Include git-ignored files." },
+                                "exclude": { "type": "array", "items": { "type": "string" }, "description": "Dir names to skip (e.g. ['node_modules','build'])." },
+                                "target": { "type": "string", "description": "(deep_slice) Relative path to file or dir." },
+                                "budget_tokens": { "type": "integer", "exclusiveMinimum": 0, "description": "(deep_slice) Token budget. Default 32000." },
+                                "skeleton_only": { "type": "boolean", "description": "(deep_slice) Strip function bodies, return signatures only." },
+                                "query": { "type": "string", "description": "(deep_slice) Semantic query for vector-ranked file selection." },
+                                "query_limit": { "type": "integer", "description": "(deep_slice) Max files returned in query mode." },
+                                "single_file": { "type": "boolean", "description": "(deep_slice) Skip vector search; return only the exact target file." },
+                                "only_dir": { "type": "string", "description": "(deep_slice) Restrict semantic search to this subdir only." }
                             },
                             "required": ["action"]
                         }
                     },
                     {
                         "name": "cortex_symbol_analyzer",
-                        "description": "🎯 SYMBOL ANALYSIS MEGATOOL — 🔥 ALWAYS USE THIS INSTEAD OF grep, rg, ag, or any text/regex search for symbol lookups. Uses tree-sitter AST analysis to deliver 100% accurate results with zero false positives from comments, strings, or name collisions. DECISION GUIDE → `read_source`: extract the exact full source of any function/class/struct from a file — always do this before editing a symbol. → `find_usages`: discover every call site, type reference, and field initialization across the workspace before changing a symbol's signature. → `blast_radius`: use BEFORE any rename, move, or delete to measure all incoming callers and outgoing callees — critical for preventing breaking changes. → `propagation_checklist`: use when modifying a shared type, interface, or proto message to generate an exhaustive checklist of every place that must be updated, grouped by language/domain. Never use grep or rg when this tool is available.",
+                        "description": "AST symbol analysis. Use INSTEAD of grep/rg. Actions: read_source (extract exact source of a symbol from a file — do this before editing), find_usages (all call/type/field sites), find_implementations (structs implementing a trait), blast_radius (callers + callees — run before rename/delete), propagation_checklist (exhaustive update checklist for shared types).",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "action": {
                                     "type": "string",
                                     "enum": ["read_source", "find_usages", "find_implementations", "blast_radius", "propagation_checklist"],
-                                    "description": "Required — selects the analysis operation.\n• `read_source` — Extracts the exact full source of a named symbol (function, struct, class, method, variable) via AST from a specific file. Faster and more accurate than cat + manual scanning; zero regex ambiguity. Supports batch extraction: provide `symbol_names` array to fetch multiple symbols in one call. Requires `path` (source file) and `symbol_name`.\n• `find_usages` — Finds all semantic usages (calls, type references, field initializations) of a symbol across a workspace directory. Categorizes by usage type to reduce cognitive load. Requires `symbol_name` and `target_dir`.\n• `find_implementations` — Finds structs/classes that implement a given trait/interface across the workspace. Requires `symbol_name` and `target_dir`.\n• `blast_radius` — Analyzes the full call hierarchy: shows who calls this function (incoming) and what the function itself calls (outgoing). Run this BEFORE every rename, move, or delete to understand true blast radius. Requires `symbol_name` and `target_dir`.\n• `propagation_checklist` — Generates a strict Markdown checklist of all places a symbol is used, grouped by language and domain (including ⚡ Tauri Commands bridge detection), ensuring no cross-module update is missed. Requires `symbol_name`; use `changed_path` for legacy contract-file (e.g. .proto) mode. Use `only_dir` to scope to a single microservice in polyrepo setups."
+                                    "description": "read_source: exact symbol body (needs path+symbol_name; use symbol_names[] for batch). find_usages: all call/type/field sites (needs symbol_name+target_dir). find_implementations: structs that impl a trait. blast_radius: full caller+callee hierarchy (run before rename/delete). propagation_checklist: Markdown checklist of all update sites for a shared type."
                                 },
-                                "repoPath": { "type": "string", "description": "Optional absolute path to the repo root." },
-                                "target_project": { "type": "string", "description": "OMNI-AST: Optional ID or absolute path of another codebase in the network map. Overrides repoPath for cross-project exploration." },
-                                "symbol_name": { "type": "string", "description": "Target symbol. Avoid regex or plural words (e.g. use 'auth', 'convert_request')." },
-                                "target_dir": { "type": "string", "description": "Scope directory (use '.' for entire repo). Required for find_usages/blast_radius; optional for propagation_checklist (defaults '.')." },
-                                "ignore_gitignore": { "type": "boolean", "description": "(propagation_checklist) Include generated / git-ignored stubs." },
-                                "max_chars": { "type": "integer", "description": "Optional: Limit output length. Default 8000 (safe for VS Code Copilot inline). Raise if your client handles larger inline output." },
-                                "only_dir": { "type": "string", "description": "(propagation_checklist) Restrict scan to this subdirectory only. Overrides `target_dir` when provided. Ideal for polyrepo / microservice workspaces — pass the service root (e.g. 'services/auth') to scope the checklist to that service without changing `target_dir` semantics." },
-
-                                "aliases": {
-                                    "type": "array",
-                                    "items": { "type": "string" },
-                                    "description": "(propagation_checklist only) An array of alternative names for the symbol across boundaries (e.g., ['trainingCaps']). The system will automatically generate standard casing variations (camelCase, snake_case, PascalCase), so you only need to provide completely different alias names here."
-                                },
-
-                                "path": { "type": "string", "description": "(read_source) Source file containing the symbol. Required for read_source." },
-                                "symbol_names": { "type": "array", "items": { "type": "string" }, "description": "(read_source) Optional batch mode. If provided, extracts all symbols from `path` and ignores `symbol_name`." },
-                                "skeleton_only": { "type": "boolean", "description": "(read_source only) If true, strips the internal bodies of functions/impls and returns only the structural signatures. Drastically saves tokens when you only need to see the interface/API of a symbol." },
-                                "instance_index": { "type": "integer", "description": "(read_source) 0-based index to select a specific instance when `symbol_name` matches multiple definitions in the same file (e.g. overloaded methods or duplicate function names). Defaults to 0 (first match). The response includes a disambiguation header showing how many instances exist and which one is being returned." },
-
-                                "changed_path": { "type": "string", "description": "(propagation_checklist) Optional legacy mode: path to a changed contract file (e.g. .proto). If provided, overrides symbol-based mode." },
-                                "max_symbols": { "type": "integer", "description": "(propagation_checklist legacy) Optional max extracted symbols (default 20)." }
+                                "repoPath": { "type": "string", "description": "Abs path to repo root." },
+                                "target_project": { "type": "string", "description": "Cross-project: ID or abs path. Overrides repoPath." },
+                                "symbol_name": { "type": "string", "description": "Target symbol name (exact, no regex)." },
+                                "target_dir": { "type": "string", "description": "Scope dir ('.' = whole repo). Required for find_usages/blast_radius." },
+                                "ignore_gitignore": { "type": "boolean", "description": "(propagation_checklist) Include git-ignored files." },
+                                "max_chars": { "type": "integer", "description": "Max output chars. Default 8000." },
+                                "only_dir": { "type": "string", "description": "(propagation_checklist) Restrict scan to this subdir." },
+                                "aliases": { "type": "array", "items": { "type": "string" }, "description": "(propagation_checklist) Alternative names across language boundaries." },
+                                "path": { "type": "string", "description": "(read_source) Source file. Required." },
+                                "symbol_names": { "type": "array", "items": { "type": "string" }, "description": "(read_source) Batch: extract multiple symbols from path." },
+                                "skeleton_only": { "type": "boolean", "description": "(read_source) Return signatures only, strip bodies." },
+                                "instance_index": { "type": "integer", "description": "(read_source) 0-based index when symbol has multiple definitions in the file." },
+                                "changed_path": { "type": "string", "description": "(propagation_checklist) Contract file path (e.g. .proto) — overrides symbol mode." },
+                                "max_symbols": { "type": "integer", "description": "(propagation_checklist) Max extracted symbols. Default 20." }
                             },
                             "required": ["action"]
                         }
                     },
                     {
                         "name": "cortex_chronos",
-                        "description": "⏳ CHRONOS SNAPSHOT MEGATOOL — ⚖️ CRITICAL: NEVER use `git diff` to verify AI refactors; it produces whitespace and line-number noise that hides semantic regressions. Chronos saves named structural AST snapshots of individual symbols under human-readable semantic tags, then compares them at the AST level — ignoring all formatting noise. DECISION GUIDE → `save_checkpoint`: call this with a tag like 'pre-refactor' or 'baseline' BEFORE any non-trivial edit — takes milliseconds, creates an unambiguous rollback reference point. → `list_checkpoints`: call this to review all existing tags before choosing names for a new snapshot, avoiding accidental collisions. → `compare_checkpoint`: call this AFTER editing to structurally verify that only the intended changes were made and no silent regressions were introduced. This three-step workflow (save → edit → compare) is mandatory for safe AI-driven code changes.",
+                        "description": "AST snapshot tool for safe refactors. Workflow: save_checkpoint (before edit) → edit → compare_checkpoint (verify). Use instead of git diff — AST-level, ignores formatting noise. Actions: save_checkpoint, list_checkpoints, compare_checkpoint, delete_checkpoint.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "action": {
                                     "type": "string",
                                     "enum": ["save_checkpoint", "list_checkpoints", "compare_checkpoint", "delete_checkpoint"],
-                                    "description": "Required — selects the Chronos operation.\n• `save_checkpoint` — Saves an AST-level snapshot of a named symbol under a semantic tag. Call this BEFORE any non-trivial refactor or edit. Requires `path` (source file path), `symbol_name`, and `semantic_tag` (or `tag` alias — use descriptive values like 'pre-refactor', 'baseline', 'v1-before-split').\n• `list_checkpoints` — Lists all saved snapshots grouped by semantic tag. Call this before a comparison to know which tags exist. Only `repoPath` is relevant (optional).\n• `compare_checkpoint` — Structurally compares two named snapshots of a symbol, ignoring whitespace and line-number differences. Returns an AST-level semantic diff. Call this AFTER editing to verify correctness. Requires `symbol_name`, `tag_a`, `tag_b`; `path` is optional as a disambiguation hint when the same tag+symbol exists in multiple files.\n• `delete_checkpoint` — Deletes checkpoint files from the local checkpoint store. Provide `namespace` alone to purge an entire namespace directory (e.g. cleaning up all QC checkpoints in one call). Or provide `symbol_name` and/or `semantic_tag`/`tag` to filter within a namespace. Optional: `path` to disambiguate when the same symbol+tag exists in multiple files."
+                                    "description": "save_checkpoint: snapshot symbol before edit (needs path+symbol_name+tag). list_checkpoints: list all saved tags. compare_checkpoint: AST diff between two tags (needs symbol_name+tag_a+tag_b; tag_b='__live__' for on-disk state). delete_checkpoint: remove by namespace/symbol/tag."
                                 },
-                                "repoPath": { "type": "string", "description": "Optional absolute path to the repo root." },
-                                "namespace": { "type": "string", "description": "Optional grouping bucket for checkpoints (default: 'default'). Use a distinct name like 'qa-run-1' per test session. To clean up all QC checkpoints at once: action='delete_checkpoint' with only namespace='qa-run-1' (omit symbol_name and semantic_tag) to purge the entire namespace directory." },
-                                "max_chars": { "type": "integer", "description": "Optional: Limit output length. Default 8000 (safe for VS Code Copilot inline). Raise if your client handles larger inline output." },
-
-                                "path": { "type": "string", "description": "(save_checkpoint/compare_checkpoint) Source file path. Optional for compare (disambiguation)." },
-                                "symbol_name": { "type": "string", "description": "(save_checkpoint/compare_checkpoint) Target symbol." },
-                                "semantic_tag": { "type": "string", "description": "(save_checkpoint) Semantic tag (e.g. pre-refactor)." },
-                                "tag": { "type": "string", "description": "(save_checkpoint) Alias for semantic_tag." },
-                                "tag_a": { "type": "string", "description": "(compare_checkpoint) First tag." },
-                                "tag_b": { "type": "string", "description": "(compare_checkpoint) Second tag. Use the magic string '__live__' to compare tag_a against the current filesystem state (requires 'path')." }
+                                "repoPath": { "type": "string", "description": "Abs path to repo root." },
+                                "namespace": { "type": "string", "description": "Checkpoint group (default 'default'). delete_checkpoint with namespace only purges the whole group." },
+                                "max_chars": { "type": "integer", "description": "Max output chars. Default 8000." },
+                                "path": { "type": "string", "description": "Source file (required for save; optional for compare)." },
+                                "symbol_name": { "type": "string", "description": "Target symbol name." },
+                                "semantic_tag": { "type": "string", "description": "Tag name (e.g. 'pre-refactor')." },
+                                "tag": { "type": "string", "description": "Alias for semantic_tag." },
+                                "tag_a": { "type": "string", "description": "(compare) First tag." },
+                                "tag_b": { "type": "string", "description": "(compare) Second tag. '__live__' = current file on disk." }
                             },
                             "required": ["action"]
                         }
                     },
                     {
                         "name": "run_diagnostics",
-                        "description": "🚨 COMPILE-TIME DIAGNOSTICS — Runs the project's primary compiler (cargo check for Rust, tsc for TypeScript, gcc for C/C++, etc.) and maps every error and warning directly to exact AST source lines. Use this immediately after any code edit to catch compiler errors before proceeding to the next step — never assume an edit compiled successfully without running this. Returns structured output including file path, line number, error code, and message, ready for targeted fixing without additional file reads. Always prefer this over running the compiler manually in a terminal.",
+                        "description": "Run compiler diagnostics (cargo check / tsc / gcc). Call after any code edit to catch errors before proceeding. Returns file, line, code, message — structured for targeted fixes.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -408,97 +394,50 @@ impl ServerState {
                     },
                     {
                         "name": "cortex_memory_retriever",
-                        "description": "🧠 MEMORY RETRIEVAL — Searches the CortexSync global memory journal (`~/.cortexast/global_memory.jsonl`) for past agent decisions, file edits, and tool-call patterns. Combines semantic vector search with keyword matching (0.7 × cosine + 0.3 × keyword for vectorized entries; keyword-only for Phase-1 entries). Use this BEFORE starting any task to recall what was done in previous sessions. ⚠️ AGENT RULE: Always call this BEFORE any web_search or file exploration — the answer may already be in memory. Returns ranked entries with intent, decision, tags, files_touched, and tool_calls; the embedding vector is omitted from output.",
+                        "description": "Search past agent decisions in global memory (semantic + keyword hybrid). Call BEFORE any research or exploration — the answer may already be cached. Returns ranked entries: intent, decision, tags, files_touched.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "Required. Natural-language description of the information you are looking for (e.g. 'how did we implement the authentication module last week')."
-                                },
-                                "top_k": {
-                                    "type": "integer",
-                                    "description": "Maximum number of results to return. Default 5.",
-                                    "default": 5
-                                },
-                                "tags": {
-                                    "type": "array",
-                                    "items": { "type": "string" },
-                                    "description": "Optional tag filter. When provided only entries that contain at least one of these tags are considered (case-insensitive). E.g. ['refactor', 'bugfix']."
-                                },
-                                "project_path": {
-                                    "type": "string",
-                                    "description": "Optional: Filter results to only entries whose project_path contains this string (e.g. '/Users/hero/work/my-project' or just 'my-project')."
-                                },
-                                "max_chars": {
-                                    "type": "integer",
-                                    "description": "Optional: Maximum output characters. Default 8000."
-                                }
+                                "query": { "type": "string", "description": "Natural-language search query." },
+                                "top_k": { "type": "integer", "description": "Max results. Default 5.", "default": 5 },
+                                "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags (case-insensitive)." },
+                                "project_path": { "type": "string", "description": "Filter to entries matching this project path substring." },
+                                "max_chars": { "type": "integer", "description": "Max output chars. Default 8000." }
                             },
                             "required": ["query"]
                         }
                     },
                     {
                         "name": "cortex_get_rules",
-                        "description": "CRITICAL: Always call this tool to fetch the codebase technical rules. Returns dynamically merged AI rules from three tiers, automatically filtering down to the most relevant rules based on your current `file_path`. If `file_path` is not provided, returns all rules.",
+                        "description": "Fetch codebase AI rules for the current context. Returns merged rules filtered by file_path (frontend/backend/db context). Call before starting any task in a new project.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "project_path": {
-                                    "type": "string",
-                                    "description": "Absolute path to the project workspace. Used to locate .cortexast.json and .cortex_rules.yml."
-                                },
-                                "file_path": {
-                                    "type": "string",
-                                    "description": "Optional: Your current working file path (e.g. '/src/ui/Button.tsx'). The system uses this to automatically detect context (frontend, backend, database) and return only the relevant codebase rules. Note: The returned rules remain valid for your entire scope/task."
-                                }
+                                "project_path": { "type": "string", "description": "Abs path to project workspace. Locates .cortexast.json / .cortex_rules.yml." },
+                                "file_path": { "type": "string", "description": "Current file path for context filtering (frontend/backend/db). Rules apply to whole task scope." }
                             },
                             "required": ["project_path"]
                         }
                     },
                     {
                         "name": "cortex_remember",
-                        "description": "🧠 CRITICAL MANDATE: Call this tool at the END of EVERY task. Keep `intent` and `decision` strictly under 200 chars each. For research, QA logs, or complex planning, you MUST first write the long-form content to a markdown file in the workspace (e.g. `docs/research.md`, `docs/qa_log.md`), then pass a pointer in `heavy_artifacts`. This is your permanent global memory — POSTs to CortexSync and vectorizes for future semantic recall.",
+                        "description": "Save task outcome to permanent global memory. Call at END of every task. intent+decision must be ≤200 chars each. For long artifacts write a file first and pass path via heavy_artifacts.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "intent": {
-                                    "type": "string",
-                                    "description": "Compressed user intent (≤ 200 chars). E.g. 'Add JWT auth to Express API'."
-                                },
-                                "decision": {
-                                    "type": "string",
-                                    "description": "Compressed agent decision / approach taken (≤ 200 chars). E.g. 'Used passport-jwt with RS256 keys in .env'."
-                                },
-                                "files_touched": {
-                                    "type": "array",
-                                    "items": { "type": "string" },
-                                    "description": "List of file paths modified or created."
-                                },
-                                "tags": {
-                                    "type": "array",
-                                    "items": { "type": "string" },
-                                    "description": "Semantic labels for filtering (e.g. ['auth', 'refactor', 'bugfix'])."
-                                },
+                                "intent": { "type": "string", "description": "User intent summary. Max 200 chars." },
+                                "decision": { "type": "string", "description": "Approach taken. Max 200 chars." },
+                                "files_touched": { "type": "array", "items": { "type": "string" }, "description": "File paths modified or created." },
+                                "tags": { "type": "array", "items": { "type": "string" }, "description": "Semantic labels (e.g. ['auth','refactor'])." },
                                 "heavy_artifacts": {
                                     "type": "array",
-                                    "description": "Pointers to long-form files written before this call. Use when the task produced research, QA logs, or architecture docs too large to fit in `decision`.",
+                                    "description": "Pointers to long-form files (research, qa_log, architecture). Write file first, then pass path here.",
                                     "items": {
                                         "type": "object",
                                         "properties": {
-                                            "artifact_type": {
-                                                "type": "string",
-                                                "enum": ["research", "qa_log", "architecture", "other"],
-                                                "description": "Category of the artifact."
-                                            },
-                                            "file_path": {
-                                                "type": "string",
-                                                "description": "Workspace-relative path to the file, e.g. 'docs/qa_log.md'."
-                                            },
-                                            "description": {
-                                                "type": "string",
-                                                "description": "≤50 char summary of the file's content."
-                                            }
+                                            "artifact_type": { "type": "string", "enum": ["research", "qa_log", "architecture", "other"] },
+                                            "file_path": { "type": "string" },
+                                            "description": { "type": "string", "description": "≤50 char summary." }
                                         },
                                         "required": ["artifact_type", "file_path", "description"]
                                     }
@@ -509,7 +448,7 @@ impl ServerState {
                     },
                     {
                         "name": "cortex_list_network",
-                        "description": "🌐 NETWORK MAP — Returns a list of all known AI-tracked codebases in the system. Use this to discover available 'target_project' IDs/paths for cross-codebase Omni-AST operations.",
+                        "description": "List all AI-tracked codebases (CortexSync network). Use to discover target_project IDs for cross-project operations.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {}
@@ -517,19 +456,19 @@ impl ServerState {
                     },
                     {
                         "name": "cortex_manage_ast_languages",
-                        "description": "Self-Evolving AST Manager: ตรวจสอบภาษาที่ระบบรองรับ และดาวน์โหลด/โหลด parser ของภาษาใหม่ (Wasm) เพื่อสอนให้ระบบสามารถอ่านโค้ดของภาษาที่ยังไม่รู้จักได้แบบ Real-time",
+                        "description": "Manage Wasm grammar parsers for non-core languages. Core (always active): rust, typescript, python. Call status to see active/available languages. Call add with languages[] to download and hot-reload parsers from GitHub tree-sitter releases. Available: go, php, cpp, c, c_sharp, java, ruby, dart.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "action": {
                                     "type": "string",
-                                    "description": "คำสั่งที่ต้องการทำ: 'status' (เพื่อเช็คภาษาใช้งานได้และภาษาที่รองรับให้โหลด) หรือ 'add' (เพื่อดาวน์โหลดและติดตั้ง)",
+                                    "description": "status: list active and downloadable languages. add: download and hot-reload parser(s).",
                                     "enum": ["status", "add"]
                                 },
                                 "languages": {
                                     "type": "array",
                                     "items": { "type": "string" },
-                                    "description": "รายชื่อภาษาที่ต้องการติดตั้ง (เช่น ['go', 'php']). จำเป็นต้องระบุเมื่อ action='add'"
+                                    "description": "Language names to install (e.g. ['go','php','cpp']). Required for action=add."
                                 }
                             },
                             "required": ["action"]

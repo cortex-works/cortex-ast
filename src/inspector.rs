@@ -665,6 +665,21 @@ impl Default for LanguageConfig {
     }
 }
 
+/// Map a language name to its actual file extensions.
+fn lang_extensions(lang: &str) -> Vec<&'static str> {
+    match lang {
+        "go"      => vec!["go"],
+        "php"     => vec!["php", "php5", "phtml"],
+        "cpp"     => vec!["cpp", "cc", "cxx", "hpp", "hxx"],
+        "c"       => vec!["c", "h"],
+        "c_sharp" => vec!["cs"],
+        "java"    => vec!["java"],
+        "ruby"    => vec!["rb", "rake"],
+        "dart"    => vec!["dart"],
+        other     => vec![Box::leak(other.to_string().into_boxed_str())],
+    }
+}
+
 impl LanguageConfig {
     pub fn load_cached_wasm_drivers(&mut self) {
         use crate::grammar_manager;
@@ -675,7 +690,7 @@ impl LanguageConfig {
                     if path.extension().and_then(|s| s.to_str()) == Some("wasm") {
                         if let Some(lang) = path.file_stem().and_then(|s| s.to_str()) {
                             let lang_str: &'static str = Box::leak(lang.to_string().into_boxed_str());
-                            let exts = vec![lang_str];
+                            let exts = lang_extensions(lang_str);
                             if let Some(driver) = WasmDriver::try_new(lang_str, exts) {
                                 let idx = self.drivers.len();
                                 self.drivers.push(Box::new(driver));
@@ -692,7 +707,7 @@ impl LanguageConfig {
 
     pub fn add_wasm_driver(&mut self, lang: &str) -> anyhow::Result<()> {
         let lang_str: &'static str = Box::leak(lang.to_string().into_boxed_str());
-        let exts = vec![lang_str]; 
+        let exts = lang_extensions(lang_str);
         if let Some(driver) = WasmDriver::try_new(lang_str, exts) {
             let idx = self.drivers.len();
             self.drivers.push(Box::new(driver));

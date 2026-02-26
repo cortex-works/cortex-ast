@@ -17,8 +17,6 @@ use std::path::PathBuf;
 /// The three statically-compiled language names. They never need downloading.
 pub const CORE_LANGUAGES: &[&str] = &["rust", "typescript", "python"];
 
-/// CDN base URL for grammar artifacts.
-const CDN_BASE: &str = "https://cdn.cortex-works.com/grammars";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cache directory helpers
@@ -79,16 +77,27 @@ pub fn ensure_grammar_available(lang: &str) -> Result<()> {
 // Download routine
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Download a single grammar artifact and write it to `dest`.
-///
-/// Artifact kind is either `"wasm"` or `"scm"`.
-fn download_artifact(lang: &str, kind: &str, dest: &PathBuf) -> Result<()> {
-    let filename = match kind {
-        "wasm" => format!("{lang}.wasm"),
-        "scm"  => format!("{lang}_prune.scm"),
-        other  => anyhow::bail!("unknown artifact kind: {other}"),
+/// Map a language name to its GitHub release download URL.
+/// Falls back to a predictable naming convention.
+fn github_wasm_url(lang: &str) -> String {
+    // Some langs have non-standard repo names
+    let repo_name = match lang {
+        "c_sharp" => "tree-sitter-c-sharp",
+        "cpp"     => "tree-sitter-cpp",
+        "c"       => "tree-sitter-c",
+        other     => Box::leak(format!("tree-sitter-{other}").into_boxed_str()),
     };
-    let url = format!("{CDN_BASE}/{filename}");
+    // Asset filename uses lang identifier (c_sharp → c_sharp.wasm)
+    format!(
+        "https://github.com/tree-sitter/{repo_name}/releases/latest/download/{repo_name}.wasm"
+    )
+}
+
+/// Download a single grammar artifact and write it to `dest`.
+/// Downloads from GitHub tree-sitter releases (primary source).
+fn download_artifact(lang: &str, _kind: &str, dest: &PathBuf) -> Result<()> {
+    // Only .wasm is downloaded; .scm files are optional and served from the same place
+    let url = github_wasm_url(lang);
 
     eprintln!("[grammar_manager] Downloading {url} → {}", dest.display());
 
@@ -112,8 +121,7 @@ fn download_artifact(lang: &str, kind: &str, dest: &PathBuf) -> Result<()> {
         .with_context(|| format!("writing {}", dest.display()))?;
 
     eprintln!(
-        "[grammar_manager] Saved {} ({} bytes) → {}",
-        filename,
+        "[grammar_manager] Saved {lang}.wasm ({} bytes) → {}",
         body.len(),
         dest.display()
     );
