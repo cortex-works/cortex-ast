@@ -80,14 +80,20 @@ pub fn ensure_grammar_available(lang: &str) -> Result<()> {
 /// Map a language name to its GitHub release download URL.
 /// Falls back to a predictable naming convention.
 fn github_wasm_url(lang: &str) -> String {
-    // Some langs have non-standard repo names
-    let repo_name = match lang {
-        "c_sharp" => "tree-sitter-c-sharp",
-        "cpp"     => "tree-sitter-cpp",
-        "c"       => "tree-sitter-c",
-        other     => Box::leak(format!("tree-sitter-{other}").into_boxed_str()),
-    };
-    // Asset filename uses lang identifier (c_sharp → c_sharp.wasm)
+    // Some langs have non-standard repo names or non-standard release asset names.
+    match lang {
+        "c_sharp"  => return "https://github.com/tree-sitter/tree-sitter-c-sharp/releases/latest/download/tree-sitter-c_sharp.wasm".to_string(),
+        "cpp"      => return "https://github.com/tree-sitter/tree-sitter-cpp/releases/latest/download/tree-sitter-cpp.wasm".to_string(),
+        "c"        => return "https://github.com/tree-sitter/tree-sitter-c/releases/latest/download/tree-sitter-c.wasm".to_string(),
+        // yaml grammar is maintained by ikatyang, not the main tree-sitter org.
+        "yaml"     => return "https://github.com/ikatyang/tree-sitter-yaml/releases/latest/download/tree-sitter-yaml.wasm".to_string(),
+        // toml: nickel-lang maintains a wasm-releasing fork.
+        "toml"     => return "https://github.com/nickel-lang/tree-sitter-toml/releases/latest/download/tree-sitter-toml.wasm".to_string(),
+        // markdown: official tree-sitter org, asset uses hyphen not underscore.
+        "markdown" => return "https://github.com/tree-sitter/tree-sitter-markdown/releases/latest/download/tree-sitter-markdown.wasm".to_string(),
+        _ => {}
+    }
+    let repo_name = Box::leak(format!("tree-sitter-{lang}").into_boxed_str()) as &str;
     format!(
         "https://github.com/tree-sitter/{repo_name}/releases/latest/download/{repo_name}.wasm"
     )

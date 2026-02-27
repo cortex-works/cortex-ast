@@ -668,15 +668,21 @@ impl Default for LanguageConfig {
 /// Map a language name to its actual file extensions.
 fn lang_extensions(lang: &str) -> Vec<&'static str> {
     match lang {
-        "go"      => vec!["go"],
-        "php"     => vec!["php", "php5", "phtml"],
-        "cpp"     => vec!["cpp", "cc", "cxx", "hpp", "hxx"],
-        "c"       => vec!["c", "h"],
-        "c_sharp" => vec!["cs"],
-        "java"    => vec!["java"],
-        "ruby"    => vec!["rb", "rake"],
-        "dart"    => vec!["dart"],
-        other     => vec![Box::leak(other.to_string().into_boxed_str())],
+        "go"       => vec!["go"],
+        "php"      => vec!["php", "php5", "phtml"],
+        "cpp"      => vec!["cpp", "cc", "cxx", "hpp", "hxx"],
+        "c"        => vec!["c", "h"],
+        "c_sharp"  => vec!["cs"],
+        "java"     => vec!["java"],
+        "ruby"     => vec!["rb", "rake"],
+        "dart"     => vec!["dart"],
+        // Structured markup / config — routed through tree-sitter so
+        // cortex_act patchers can target byte-accurate AST nodes.
+        "json"     => vec!["json"],
+        "yaml"     => vec!["yaml", "yml"],
+        "toml"     => vec!["toml"],
+        "markdown" => vec!["md", "markdown"],
+        other      => vec![Box::leak(other.to_string().into_boxed_str())],
     }
 }
 
