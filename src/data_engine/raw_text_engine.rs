@@ -1,6 +1,12 @@
-//! Raw-text engine — handles `.log`, `.txt`, `.env`, and similar plain-text files.
+//! Raw-text engine — handles **unstructured** plain-text files: logs, env-vars,
+//! INI configs, and similar line-oriented content.
 //!
-//! Provides line-count overview, head/tail preview, and substring/prefix grep.
+//! IMPORTANT: `.yaml`, `.yml`, `.toml`, `.json`, `.md` are intentionally NOT
+//! here.  Those structured formats are routed to `TreeSitterEngine` so that
+//! the `cortex_act` patchers can reach their exact AST byte-offsets.
+//!
+//! `.sql` is routed here temporarily until a dedicated SQL-AST grammar is
+//! integrated (TODO: upgrade to tree-sitter-sql Wasm driver).
 
 use super::FileExplorer;
 use anyhow::{Context, Result};
@@ -20,7 +26,10 @@ impl FileExplorer for RawTextEngine {
     fn name(&self) -> &'static str { "raw_text" }
 
     fn supported_extensions(&self) -> &'static [&'static str] {
-        &["log", "txt", "env", "ini", "cfg", "conf", "toml", "yaml", "yml", "md", "markdown"]
+        // Strictly unstructured / line-oriented formats.
+        // Structured formats (json/yaml/toml/md) go to TreeSitterEngine.
+        // sql goes here until a tree-sitter-sql Wasm grammar is available.
+        &["log", "txt", "env", "ini", "cfg", "conf", "sql"]
     }
 
     /// Preview: line count + first N lines + last M lines.

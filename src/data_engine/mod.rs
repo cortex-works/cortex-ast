@@ -3,16 +3,27 @@
 //! A lightweight, extensible registry of file-format parsers that sit alongside
 //! the tree-sitter AST engine.  The registry is used by:
 //!
-//! - `cortex_data_explorer` — query / preview CSV, TSV, log, env files
+//! - `cortex_data_explorer` — query / preview CSV/TSV, structured markup,
+//!   plain-text, and SQL files
 //! - `cortex_get_capabilities` — enumerate all supported extensions and their
 //!   assigned engine
 //!
+//! ## Extension routing (registration order = priority; first match wins)
+//!
+//! | Engine             | Extensions                              |
+//! |--------------------|-----------------------------------------|
+//! | `TreeSitterEngine` | `json yaml yml toml md markdown`        |
+//! | `CsvEngine`        | `csv tsv`                               |
+//! | `RawTextEngine`    | `log txt env ini cfg conf sql`          |
+//!
 //! ## Adding a new engine
 //! 1. Create a new sub-module that implements [`FileExplorer`].
-//! 2. Register it in [`ParserRegistry::default()`].
+//! 2. Register it in [`ParserRegistry::default()`] **before** any fallback
+//!    engine that might claim the same extension.
 
 pub mod duckdb_engine;
 pub mod raw_text_engine;
+pub mod tree_sitter_engine;
 
 use std::path::Path;
 use anyhow::Result;
@@ -69,7 +80,11 @@ pub struct ParserRegistry {
 impl Default for ParserRegistry {
     fn default() -> Self {
         Self {
+            // Registration order = routing priority (first match wins).
+            // TreeSitterEngine must come before RawTextEngine so that
+            // json/yaml/toml/md are captured before the plain-text fallback.
             engines: vec![
+                Box::new(tree_sitter_engine::TreeSitterEngine::new()),
                 Box::new(duckdb_engine::CsvEngine::new()),
                 Box::new(raw_text_engine::RawTextEngine::new()),
             ],

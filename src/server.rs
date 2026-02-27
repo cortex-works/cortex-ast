@@ -505,7 +505,7 @@ impl ServerState {
                     },
                     {
                         "name": "cortex_get_capabilities",
-                        "description": "List all file extensions supported by CortexAST, grouped by engine type (tree_sitter AST, data/CSV, raw text). Use this to quickly check whether a file type is supported before calling other tools.",
+                        "description": "List all file extensions supported by CortexAST, grouped by engine type (tree_sitter AST, data/CSV, markup/config via tree-sitter, raw text). Use this to quickly check whether a file type is supported before calling other tools.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {},
@@ -1524,19 +1524,21 @@ Call cortex_chronos with action='list_checkpoints' first to see what exists.".to
 
                 let reg = crate::data_engine::registry();
                 let mut data_exts: Vec<String> = Vec::new();
+                let mut markup_exts: Vec<String> = Vec::new();
                 let mut text_exts: Vec<String> = Vec::new();
                 for engine in reg.engines() {
                     let exts: Vec<String> = engine.supported_extensions().iter().map(|s| s.to_string()).collect();
-                    if engine.name() == "csv" {
-                        data_exts.extend(exts);
-                    } else {
-                        text_exts.extend(exts);
+                    match engine.name() {
+                        "csv"          => data_exts.extend(exts),
+                        "tree_sitter"  => markup_exts.extend(exts),
+                        _              => text_exts.extend(exts),
                     }
                 }
 
                 let caps = serde_json::json!({
                     "tree_sitter": ast_exts,
                     "data": data_exts,
+                    "markup": markup_exts,
                     "text": text_exts,
                 });
                 ok(serde_json::to_string_pretty(&caps).unwrap_or_default())
